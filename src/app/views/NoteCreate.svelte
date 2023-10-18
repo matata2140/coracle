@@ -1,12 +1,13 @@
 <script lang="ts">
   import {onMount} from "svelte"
   import {nip19} from "nostr-tools"
-  import {without} from "ramda"
+  import {without, uniqBy, prop} from "ramda"
   import {throttle} from "hurdak"
   import {writable} from "svelte/store"
   import {annotateMedia} from "src/util/misc"
   import {asNostrEvent} from "src/util/nostr"
   import Anchor from "src/partials/Anchor.svelte"
+  import Card from "src/partials/Card.svelte"
   import Compose from "src/app/shared/Compose.svelte"
   import ImageInput from "src/partials/ImageInput.svelte"
   import Media from "src/partials/Media.svelte"
@@ -16,25 +17,50 @@
   import Field from "src/partials/Field.svelte"
   import Heading from "src/partials/Heading.svelte"
   import RelayCard from "src/app/shared/RelayCard.svelte"
+  import GroupSummary from "src/app/shared/GroupSummary.svelte"
   import NoteContent from "src/app/shared/NoteContent.svelte"
   import RelaySearch from "src/app/shared/RelaySearch.svelte"
-  import {Publisher, publishNote, displayRelay, getUserRelayUrls, mention} from "src/engine"
+  import {Publisher, buildEvent, displayRelay, getUserRelayUrls, mention} from "src/engine"
   import {toastProgress} from "src/app/state"
   import {router} from "src/app/router"
-  import {session, getEventHints, displayPubkey} from "src/engine"
+  import {
+    env,
+    session,
+    getEventHints,
+    displayGroup,
+    groups,
+    groupSharedKeys,
+    wrapOrSign,
+  } from "src/engine"
 
   export let quote = null
   export let pubkey = null
   export let writeTo: string[] | null = null
+  export let groupPubkey: string | null = quote?.group
 
   let q = ""
+  let view = null
+  let groupPk = groupPubkey
   let images = []
   let warning = null
   let compose = null
   let wordCount = 0
   let showPreview = false
-  let showSettings = false
   let relays = writable(writeTo ? writeTo : getUserRelayUrls("write"))
+
+  const groupOptions = groupSharedKeys.derived($keys => {
+    const $groups = []
+
+    for (const k of $keys) {
+      const group = groups.key(k.group).get()
+
+      if (group) {
+        $groups.push(group)
+      }
+    }
+
+    return uniqBy(prop("id"), $groups)
+  })
 
   const onSubmit = async () => {
     const tags = []
@@ -52,13 +78,18 @@
       tags.push(mention(quote.pubkey))
 
       // Re-broadcast the note we're quoting
-      Publisher.publish({
-        relays: $relays,
-        event: asNostrEvent(quote),
-      })
+      if (!groupPk) {
+        Publisher.publish({
+          relays: $relays,
+          event: asNostrEvent(quote),
+        })
+      }
     }
 
-    const pub = await publishNote(content, tags, $relays)
+    const pub = Publisher.publish({
+      relays: $relays,
+      event: await wrapOrSign(groupPubkey, buildEvent(1, {content, tags})),
+    })
 
     pub.on("progress", toastProgress)
 
@@ -79,11 +110,6 @@
     images = without([url], images)
   }
 
-  const closeSettings = () => {
-    q = ""
-    showSettings = false
-  }
-
   const saveRelay = url => {
     q = ""
     relays.update($r => $r.concat(url))
@@ -91,6 +117,14 @@
 
   const removeRelay = url => {
     relays.update(without([url]))
+  }
+
+  const setGroup = pubkey => {
+    if (groupPk === pubkey) {
+      groupPk = null
+    } else {
+      groupPk = pubkey
+    }
   }
 
   const togglePreview = () => {
@@ -102,6 +136,19 @@
       wordCount = compose.parse().match(/\s+/g)?.length || 0
     }
   })
+
+  const showSettings = () => {
+    view = "settings"
+  }
+
+  const showGroups = () => {
+    view = "groups"
+  }
+
+  const hideView = () => {
+    q = ""
+    view = null
+  }
 
   onMount(() => {
     if (pubkey && pubkey !== $session.pubkey) {
@@ -121,7 +168,17 @@
     <Heading class="text-center">Create a note</Heading>
     <div class="flex w-full flex-col gap-4">
       <div class="flex flex-col gap-2">
-        <strong>What do you want to say?</strong>
+        <div class="flex items-center justify-between">
+          <strong>What do you want to say?</strong>
+          {#if $groupOptions.length > 0}
+            <div class:cursor-pointer={!quote?.group} on:click={quote?.group ? null : showGroups}>
+              <i class="fa fa-circle-nodes" />
+              {#if groupPk}
+                {displayGroup(groups.key(groupPk).get())}
+              {/if}
+            </div>
+          {/if}
+        </div>
         <div
           class="mt-4 rounded-xl border border-solid border-gray-6 p-3"
           class:bg-input={!showPreview}
@@ -137,10 +194,6 @@
         <div class="flex items-center justify-end gap-2 text-gray-5">
           <small class="hidden sm:block">
             {wordCount} words
-          </small>
-          <span class="hidden sm:block">•</span>
-          <small>
-            Posting as @{displayPubkey($session.pubkey)}
           </small>
           <span>•</span>
           <small on:click={togglePreview} class="cursor-pointer underline">
@@ -162,11 +215,7 @@
           >Send</Anchor>
         <ImageInput multi onChange={addImage} />
       </div>
-      <small
-        class="flex cursor-pointer items-center justify-end gap-2"
-        on:click={() => {
-          showSettings = true
-        }}>
+      <small class="flex cursor-pointer items-center justify-end gap-2" on:click={showSettings}>
         <span>
           {#if $relays?.length === 1}
             {displayRelay({url: $relays[0]})}
@@ -184,42 +233,66 @@
   </Content>
 </form>
 
-{#if showSettings}
-  <Modal onEscape={closeSettings}>
-    <form on:submit|preventDefault={closeSettings}>
+{#if view}
+  <Modal onEscape={hideView}>
+    <form on:submit|preventDefault={hideView}>
       <Content>
-        <div class="mb-4 flex items-center justify-center">
-          <Heading>Note settings</Heading>
-        </div>
-        <Field icon="fa-warning" label="Content warnings">
-          <Input bind:value={warning} placeholder="Why might people want to skip this post?" />
-        </Field>
-        <div>Select which relays to publish to:</div>
-        <div>
-          {#each $relays as url}
-            <div
-              class="mb-2 mr-1 inline-block rounded-full border border-solid border-gray-1 px-2 py-1">
-              <button
-                type="button"
-                class="fa fa-times cursor-pointer"
-                on:click={() => removeRelay(url)} />
-              {displayRelay({url})}
-            </div>
-          {/each}
-        </div>
-        <RelaySearch bind:q limit={3} hideIfEmpty>
-          <div slot="item" let:relay>
-            <RelayCard {relay}>
-              <button
-                slot="actions"
-                class="underline"
-                on:click|preventDefault={() => saveRelay(relay.url)}>
-                Add relay
-              </button>
-            </RelayCard>
+        {#if view === "settings"}
+          <div class="mb-4 flex items-center justify-center">
+            <Heading>Note settings</Heading>
           </div>
-        </RelaySearch>
-        <Anchor tag="button" theme="button" type="submit" class="w-full text-center">Done</Anchor>
+          <Field icon="fa-warning" label="Content warnings">
+            <Input bind:value={warning} placeholder="Why might people want to skip this post?" />
+          </Field>
+          {#if $env.FORCE_RELAYS.length === 0}
+            <Field icon="fa-database" label="Select which relays to publish to">
+              <div>
+                {#each $relays as url}
+                  <div
+                    class="mb-2 mr-1 inline-block rounded-full border border-solid border-gray-1 px-2 py-1">
+                    <button
+                      type="button"
+                      class="fa fa-times cursor-pointer"
+                      on:click={() => removeRelay(url)} />
+                    {displayRelay({url})}
+                  </div>
+                {/each}
+              </div>
+              <RelaySearch bind:q limit={3} hideIfEmpty>
+                <div slot="item" let:relay>
+                  <RelayCard {relay}>
+                    <button
+                      slot="actions"
+                      class="underline"
+                      on:click|preventDefault={() => saveRelay(relay.url)}>
+                      Add relay
+                    </button>
+                  </RelayCard>
+                </div>
+              </RelaySearch>
+            </Field>
+          {/if}
+          <Anchor tag="button" theme="button" type="submit" class="w-full text-center">Done</Anchor>
+        {:else if view === "groups"}
+          <div class="mb-4 flex items-center justify-center">
+            <Heading>Post to a group</Heading>
+          </div>
+          <div>Select a group to post to:</div>
+          <div>
+            {#each $groupOptions as group (group.pubkey)}
+              <Card invertColors interactive on:click={() => setGroup(group.pubkey)}>
+                <GroupSummary groupPubkey={group.pubkey}>
+                  <div slot="actions">
+                    {#if groupPk === group.pubkey}
+                      <i class="fa fa-circle-check text-accent" />
+                    {/if}
+                  </div>
+                </GroupSummary>
+              </Card>
+            {/each}
+          </div>
+          <Anchor tag="button" theme="button" type="submit" class="text-center">Done</Anchor>
+        {/if}
       </Content>
     </form>
   </Modal>

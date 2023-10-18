@@ -5,9 +5,10 @@
   import Toggle from "src/partials/Toggle.svelte"
   import {router} from "src/app/router"
 
-  export let label
   export let value
+  export let label = null
   export let encode = null
+  export let isPassword = false
 
   let showEncoded = true
 
@@ -23,7 +24,11 @@
 
 <div class="flex flex-col gap-2">
   <div class="flex items-center justify-between">
-    <strong>{label}</strong>
+    <strong class="flex-grow">
+      <slot name="label">
+        {label}
+      </slot>
+    </strong>
     {#if encode}
       <Popover triggerType="mouseenter">
         <div slot="trigger">
@@ -39,7 +44,7 @@
       <i class="fa-solid fa-qrcode cursor-pointer" on:click={share} />
     </div>
     <p class="min-w-0 overflow-hidden text-ellipsis">
-      {displayValue}
+      {isPassword ? displayValue.replace(/./g, "•") : displayValue}
     </p>
   </div>
 </div>

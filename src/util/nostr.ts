@@ -145,6 +145,7 @@ export const isLike = (content: string) =>
   ["", "+", "🤙", "👍", "❤️", "😎", "🏅", "🫂", "🤣", "😂", "💜"].includes(content)
 
 export const channelAttrs = ["name", "about", "picture"]
+export const groupAttrs = ["name", "about", "picture"]
 
 export const asNostrEvent = e =>
   pick(["content", "created_at", "id", "kind", "pubkey", "sig", "tags"], e) as Event

@@ -18,6 +18,7 @@
   import {
     env,
     load,
+    nip59,
     people,
     loadOne,
     getLnUrl,
@@ -30,6 +31,7 @@
     getEventHints,
     getIdFilters,
     getReplyFilters,
+    getRecipientKey,
     selectHints,
     mergeHints,
     loadPubkeys,
@@ -50,6 +52,7 @@
   export let showMuted = false
 
   let zapper, unsubZapper
+  let ready = false
   let event = note
   let reply = null
   let replyIsActive = false
@@ -141,16 +144,6 @@
   )
 
   onMount(async () => {
-    const zapAddress = Tags.from(note).getMeta("zap")
-
-    if (zapAddress && getLnUrl(zapAddress)) {
-      zapper = await getZapper(getLnUrl(zapAddress))
-    } else {
-      unsubZapper = people.key(note.pubkey).subscribe($p => {
-        zapper = $p?.zapper
-      })
-    }
-
     if (!event.pubkey) {
       event = await loadOne({
         relays: selectHints(relays).concat(LOCAL_RELAY_URL),
@@ -158,12 +151,28 @@
       })
     }
 
+    if (event.kind === 1059) {
+      event = await nip59.get().unwrap(event, getRecipientKey(event))
+    }
+
+    ready = true
+
     if (event.pubkey) {
+      const zapAddress = Tags.from(note).getMeta("zap")
+
+      if (zapAddress && getLnUrl(zapAddress)) {
+        zapper = await getZapper(getLnUrl(zapAddress))
+      } else {
+        unsubZapper = people.key(note.pubkey).subscribe($p => {
+          zapper = $p?.zapper
+        })
+      }
+
       loadPubkeys([event.pubkey])
 
       const kinds = [1, 7]
 
-      if ($env.ENABLE_ZAPS) {
+      if ($env.ENABLE_ZAPS && !event.wrap) {
         kinds.push(9735)
       }
 
@@ -182,7 +191,7 @@
   })
 </script>
 
-{#if event.pubkey}
+{#if ready}
   {@const path = router
     .at("notes")
     .of(event.id, {relays: getEventHints(event)})

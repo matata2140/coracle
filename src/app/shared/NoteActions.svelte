@@ -27,11 +27,13 @@
     publishDeletion,
     getUserRelayUrls,
     getPublishHints,
-    publishReaction,
+    buildEvent,
     processZap,
     displayRelay,
     getEventHints,
     isEventMuted,
+    getReplyTags,
+    wrapOrSign,
   } from "src/engine"
 
   export let note: Event
@@ -71,9 +73,15 @@
   const muteNote = () => mute("e", note.id)
 
   const react = async content => {
-    const pub = await publishReaction(note, content)
+    const relays = getPublishHints(parent)
 
-    like = pub.event
+    like = await wrapOrSign(note.group, buildEvent(7, {content, tags: getReplyTags(note)}))
+
+    if (!note.wrap) {
+      Publisher.publish({relays, event: asNostrEvent(note)})
+    }
+
+    Publisher.publish({relays, event: like})
   }
 
   const deleteReaction = e => {
@@ -144,15 +152,15 @@
 
     if ($env.FORCE_RELAYS.length === 0) {
       actions.push({label: "Broadcast", icon: "rss", onClick: broadcast})
-
-      actions.push({
-        label: "Details",
-        icon: "info",
-        onClick: () => {
-          showDetails = true
-        },
-      })
     }
+
+    actions.push({
+      label: "Details",
+      icon: "info",
+      onClick: () => {
+        showDetails = true
+      },
+    })
   }
 </script>
 
@@ -178,7 +186,7 @@
         })} />
       {$likesCount}
     </button>
-    {#if $env.ENABLE_ZAPS}
+    {#if $env.ENABLE_ZAPS && !note.wrap}
       <button
         class={cx("relative w-16 pt-1 text-left transition-all hover:pb-1 hover:pt-0 sm:w-20", {
           "pointer-events-none opacity-50": disableActions || !canZap,

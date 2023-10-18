@@ -8,6 +8,7 @@ import type {Event} from "src/engine/events/model"
 import {env} from "src/engine/session/state"
 import {stateKey} from "src/engine/session/derived"
 import {people} from "src/engine/people/state"
+import {groups} from "src/engine/groups/state"
 import {pool} from "src/engine/network/state"
 import {getSetting} from "src/engine/session/utils"
 import type {Relay} from "./model"
@@ -212,6 +213,10 @@ export const getPublishHints = hintSelector(function* (event: Event) {
 
 export const getInboxHints = hintSelector(function* (pubkeys: string[]) {
   yield* mergeHints(pubkeys.map(pk => getPubkeyHints(pk, "read")))
+})
+
+export const getGroupHints = hintSelector(function* (pubkey: string) {
+  yield* groups.key(pubkey).get()?.relays || []
 })
 
 export const mergeHints = (groups: string[][], limit: number = null) => {
