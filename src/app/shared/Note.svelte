@@ -34,6 +34,7 @@
     mergeHints,
     loadPubkeys,
     sortEventsDesc,
+    loadReactions,
     isChildOf,
   } from "src/engine"
 
@@ -165,6 +166,9 @@
 
     if (event.pubkey) {
       loadPubkeys([event.pubkey])
+      for await (const c of loadReactions(event.id, getReplyHints(event))) {
+        console.log(event.id, c)
+      }
 
       const kinds = [1, 7]
 
